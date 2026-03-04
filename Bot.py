@@ -1,170 +1,169 @@
-import asyncio
-import random
-import time
-from pyrogram import Client, errors, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import telebot
+from telebot import types
+import os
+import subprocess
 
-# --- [ AYARLAR ] ---
-API_ID = 35411044
-API_HASH = '9fa8ebe0ccbf7ae2cdbf3841976efbbf'
-BOT_TOKEN = '8625332216:AAHB3PxXhF64uiyvXU6XMvqKI4ZnzGFgFCA'
-TARGET_CHANNEL = "cantagkanal" 
+# --- AYARLAR ---
+TOKEN = "8732604700:AAFGlCTAUBG7xkouu8ZaXnFmf_3MrdVJc3Y"
 ADMIN_ID = 8434939976 
+START_PHOTO = "https://img.freepik.com/free-vector/server-room-cloud-storage-concept-datacenter-database-technology-data-center-isometric-composition_39422-542.jpg"
 
-user_app = Client("sniper_user_session", api_id=API_ID, api_hash=API_HASH)
-bot_app = Client("sniper_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = telebot.TeleBot(TOKEN)
 
-# --- [ HAFIZA VE VERİ ] ---
-user_credits = {} 
-all_users = set()
-vip_users = [ADMIN_ID]
-waiting_for_tag = []
-DEFAULT_CREDIT = 3 
-REF_REWARD = 5 
+# Veri Takibi
+running_processes = {}
+user_states = {}
+pending_files = {} # Onay bekleyen dosyalar: {file_id: {uid, name, content}}
 
-# --- [ ÜRETİCİ: KÜFÜRLÜ, OTORİTER VE HAVALI ] ---
+# --- YARDIMCI FONKSİYONLAR ---
+def get_user_folder(uid):
+    path = f"downloads/{uid}"
+    os.makedirs(path, exist_ok=True)
+    return path
 
-def generate_elite_name():
-    # 1. Sanayi/Sert Otorite Grubu
-    boss_prefix = ["Sanayi", "Cadde", "Sokak", "Mahalle", "Semt", "Alem", "Gece", "Zifiri", "Yeralti", "Mezar", "Kaos"]
-    boss_suffix = ["Sahibi", "Reisi", "Agasi", "Piri", "Krali", "Lideri", "Baskani", "Vip", "Sefi", "Babasi"]
+def get_user_files(uid):
+    folder = get_user_folder(uid)
+    return [f for f in os.listdir(folder) if f.endswith('.py')]
+
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("📦 Modül Yükle", "📁 Dosya Yükle")
+    markup.row("📂 Dosyalarım", "📞 Destek & İletişim")
+    return markup
+
+# --- KOMUTLAR ---
+@bot.message_handler(commands=['start'])
+def welcome(message):
+    uid = message.from_user.id
+    files = get_user_files(uid)
+    text = (f"👋 Hoş Geldiniz, {message.from_user.first_name}!\n\n"
+            f"👤 Durumunuz: 🆓 Ücretsiz Kullanıcı\n"
+            f"📁 Dosya Sayınız: {len(files)} / 3\n\n"
+            f"🤖 Dosya yüklediğinizde admin onayından sonra aktif olacaktır.")
     
-    # 2. Sert/Argo/Küfürlü Grup
-    slang_roots = ["Sik", "Pic", "Am", "Got", "Yarrak", "Dalyarak", "Kancik", "Gavat", "Serefsiz", "Kevase", "Orospu"]
-    slang_ends = ["ici", "perest", "log", "izm", "matik", "zade", "han", "can", "bey", "istan", "of"]
-    
-    # 3. Modern/Elit/Havalı Grup
-    cool_prefix = ["Must", "Dark", "Lord", "Azar", "Turk", "Marlboro", "Work", "Zex", "Rex", "Sky", "Mega", "Alpha", "Zero", "Ghost", "Nitro"]
-    cool_suffix = ["ox", "enzy", "touch", "ly", "ix", "31", "69", "hub", "net", "star", "pro", "shot", "vibe"]
-
-    choice = random.randint(1, 4)
-    if choice == 1: return (random.choice(boss_prefix) + random.choice(boss_suffix)).lower()
-    elif choice == 2: return (random.choice(slang_roots) + random.choice(slang_ends)).lower()
-    elif choice == 3: return (random.choice(cool_prefix) + random.choice(cool_suffix)).lower()
-    else: return (random.choice(boss_prefix) + random.choice(cool_suffix)).lower()
-
-# --- [ TAKİP VE TEMİZLİK SİSTEMİ ] ---
-
-async def monitor_and_clean(username, channel_msg_id, user_id=None, user_msg_id=None):
-    start_time = time.time()
-    is_taken = False
-    while True:
-        try:
-            if not is_taken:
-                try:
-                    await user_app.get_chat(username)
-                    # ALINDI! Mesajı güncelle
-                    is_taken = True
-                    text = f"❌ **BU TAG ALINDI!**\n\n👤 Tag: @{username}\n⚠️ Artık müsait değil. Yeni isimler taranıyor..."
-                    await bot_app.edit_message_text(f"@{TARGET_CHANNEL}", channel_msg_id, text)
-                    if user_id and user_msg_id:
-                        try: await bot_app.edit_message_text(user_id, user_msg_id, f"❌ @{username} kapıldı!")
-                        except: pass
-                except errors.UsernameNotOccupied: pass
-
-            # 24 Saat dolunca sil (86400 saniye)
-            if time.time() - start_time > 86400:
-                try: await bot_app.delete_messages(f"@{TARGET_CHANNEL}", channel_msg_id)
-                except: pass
-                break
-            await asyncio.sleep(20)
-        except Exception: break
-
-# --- [ YAYIN FONKSİYONU ] ---
-
-async def broadcast(username):
-    tag_md = f"`@{username}`"
-    text = (
-        "💎 **YENİ TAG BULUNDU!**\n\n"
-        f"👤 İsim: {tag_md}\n"
-        "👆 (Kopyalamak için üzerine dokun)\n\n"
-        "🔥 **DURUM:** Boşta! Hemen kap!\n\n"
-        "⬇️ **HIZLI ALMA TALİMATI:**\n"
-        "1. Yukarıdaki isme dokunup kopyala.\n"
-        "2. Alttaki 'Hemen Al / Profile Git' butonuna bas.\n"
-        "3. Açılan yerde kullanıcı adını yapıştır ve kaydet!"
-    )
-    btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Hemen Al / Profile Git", url="tg://settings/username")],
-        [InlineKeyboardButton("📢 Kanalı Görüntüle", url=f"https://t.me/{TARGET_CHANNEL}")]
-    ])
-
-    sent_channel_msg = await bot_app.send_message(f"@{TARGET_CHANNEL}", text, reply_markup=btn)
-    
-    u_uid, u_msg_id = None, None
-    if waiting_for_tag:
-        u_uid = waiting_for_tag.pop(0)
-        try:
-            u_msg = await bot_app.send_message(u_uid, "🎁 **Senin İçin Bulundu!**\n" + text, reply_markup=btn)
-            u_msg_id = u_msg.id
-        except: pass
-
-    asyncio.create_task(monitor_and_clean(username, sent_channel_msg.id, u_uid, u_msg_id))
-
-# --- [ BOT KOMUTLARI ] ---
-
-@bot_app.on_message(filters.command("start"))
-async def start_handler(client, message):
-    user_id = message.from_user.id
-    all_users.add(user_id)
-    
-    if len(message.command) > 1 and message.command[1].startswith("ref_"):
-        inviter_id = int(message.command[1].split("_")[1])
-        if inviter_id != user_id:
-            user_credits[inviter_id] = user_credits.get(inviter_id, DEFAULT_CREDIT) + REF_REWARD
-            try: await bot_app.send_message(inviter_id, f"🎉 Arkadaşın katıldı! **+{REF_REWARD} Hak** kazandın.")
-            except: pass
-
-    if user_id not in user_credits: user_credits[user_id] = DEFAULT_CREDIT
-
     try:
-        await bot_app.get_chat_member(TARGET_CHANNEL, user_id)
+        bot.send_photo(message.chat.id, START_PHOTO, caption=text, reply_markup=main_menu())
     except:
-        return await message.reply_text(
-            "⚠️ **DUR! Botu kullanmak için kanala katıl.**",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📢 Kanala Katıl", url=f"https://t.me/{TARGET_CHANNEL}")]])
-        )
+        bot.send_message(message.chat.id, text, reply_markup=main_menu())
 
-    invite_link = f"https://t.me/{(await bot_app.get_me()).username}?start=ref_{user_id}"
-    await message.reply_text(
-        f"🚀 **Elite Sniper Bot (VDS)**\n\n"
-        f"👤 **Hesabın:** {'Admin' if user_id == ADMIN_ID else f'{user_credits[user_id]} Hak'}\n"
-        f"🎁 **Davet Linkin:** `{invite_link}`\n"
-        "(Davet başına +5 hak!)",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔍 Bana Tag Bul", callback_data="find_tag")]])
-    )
+# --- DOSYA YÜKLEME VE ONAY İSTEĞİ ---
+@bot.message_handler(content_types=['document'])
+def handle_docs(message):
+    uid = message.from_user.id
+    f_name = message.document.file_name
 
-@bot_app.on_callback_query(filters.regex("find_tag"))
-async def find_tag_cb(client, query):
-    u_id = query.from_user.id
-    if u_id != ADMIN_ID and user_credits.get(u_id, 0) <= 0:
-        return await query.answer("❌ Hakkın bitti! Arkadaşlarını davet et.", show_alert=True)
-    if u_id not in waiting_for_tag:
-        if u_id != ADMIN_ID: user_credits[u_id] -= 1
-        waiting_for_tag.append(u_id)
-        await query.answer("Pusuya yatıldı! Boşta isim çıkınca ilk sana haber vereceğim.", show_alert=True)
-    else: await query.answer("Zaten sıradadasın.", show_alert=True)
+    if not f_name.endswith(".py"):
+        return bot.reply_to(message, "❌ Sadece .py dosyaları gönderebilirsiniz.")
 
-# --- [ ANA ÇALIŞTIRICI ] ---
+    if len(get_user_files(uid)) >= 3:
+        return bot.reply_to(message, "⚠️ Dosya limitiniz dolmuş (3/3).")
 
-async def hunting():
-    while True:
-        target = generate_elite_name()
-        try:
-            await user_app.get_chat(target)
-        except errors.UsernameNotOccupied:
-            await broadcast(target)
-            await asyncio.sleep(25)
-        except Exception: pass
-        await asyncio.sleep(4)
+    # Dosyayı geçici olarak hafızaya al (Henüz kaydetme)
+    file_info = bot.get_file(message.document.file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    
+    # Onay kodunu oluştur (file_id üzerinden)
+    f_id = message.document.file_id
+    pending_files[f_id] = {"uid": uid, "name": f_name, "content": downloaded_file}
 
-async def main():
-    await user_app.start()
-    await bot_app.start()
-    asyncio.create_task(hunting())
-    print("🔥 Sert & Küfürlü Tag Sniper VDS'de Yayında!")
-    from pyrogram import idle
-    await idle()
+    # Kullanıcıya bilgi ver
+    bot.reply_to(message, "⏳ Dosyanız admin onayına gönderildi. Onaylandığında bildirim alacaksınız.")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    # Admin'e Onay Butonlu Mesaj Gönder
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("✅ Onayla", callback_data=f"approve_{f_id}"),
+               types.InlineKeyboardButton("❌ Reddet", callback_data=f"reject_{f_id}"))
+    
+    bot.send_message(ADMIN_ID, f"🔔 **YENİ DOSYA ONAYI**\n\n👤 **Kullanıcı:** {message.from_user.first_name} ({uid})\n📄 **Dosya:** `{f_name}`", 
+                     reply_markup=markup, parse_mode="Markdown")
+
+# --- CALLBACK İŞLEMLERİ (ONAY, ÇALIŞTIRMA, SİLME) ---
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    uid = call.from_user.id
+    data = call.data
+
+    # --- ADMİN ONAY İŞLEMLERİ ---
+    if data.startswith(("approve_", "reject_")):
+        action, f_id = data.split("_", 1)
+        
+        if f_id not in pending_files:
+            return bot.answer_callback_query(call.id, "❌ Dosya verisi bulunamadı veya süre doldu.")
+
+        target_uid = pending_files[f_id]["uid"]
+        target_name = pending_files[f_id]["name"]
+
+        if action == "approve":
+            # Dosyayı gerçek klasöre kaydet
+            path = get_user_folder(target_uid)
+            with open(f"{path}/{target_name}", 'wb') as f:
+                f.write(pending_files[f_id]["content"])
+            
+            bot.send_message(target_uid, f"✅ `{target_name}` isimli dosyanız admin tarafından **onaylandı**! Artık çalıştırabilirsiniz.")
+            bot.edit_message_text(f"✅ Onaylandı: `{target_name}` (Kullanıcı: {target_uid})", call.message.chat.id, call.message.message_id)
+        
+        else:
+            bot.send_message(target_uid, f"❌ `{target_name}` isimli dosyanız admin tarafından **reddedildi**.")
+            bot.edit_message_text(f"❌ Reddedildi: `{target_name}`", call.message.chat.id, call.message.message_id)
+        
+        del pending_files[f_id]
+        return
+
+    # --- DOSYA YÖNETİM İŞLEMLERİ (BAŞLAT, STOP, LOG, DEL) ---
+    action, f_name = data.split("_", 1)
+    f_path = f"downloads/{uid}/{f_name}"
+    p_key = f"{uid}_{f_name}"
+
+    if action == "run":
+        if p_key in running_processes:
+            bot.answer_callback_query(call.id, "⚠️ Zaten çalışıyor.")
+        else:
+            log_f = open(f"{f_path}.log", "w")
+            proc = subprocess.Popen(["python3", f_path], stdout=log_f, stderr=log_f)
+            running_processes[p_key] = proc
+            bot.edit_message_text(f"📄 **Dosya:** `{f_name}`\n📌 **Durum:** 🟢 Çalışıyor", 
+                                  call.message.chat.id, call.message.message_id, reply_markup=call.message.reply_markup, parse_mode="Markdown")
+
+    elif action == "stop":
+        if p_key in running_processes:
+            running_processes[p_key].terminate()
+            del running_processes[p_key]
+            bot.edit_message_text(f"📄 **Dosya:** `{f_name}`\n📌 **Durum:** 🔴 Durduruldu", 
+                                  call.message.chat.id, call.message.message_id, reply_markup=call.message.reply_markup, parse_mode="Markdown")
+
+    elif action == "log":
+        log_p = f"{f_path}.log"
+        if os.path.exists(log_p):
+            with open(log_p, "r") as f: logs = f.read()[-500:]
+            bot.send_message(call.message.chat.id, f"📝 **Log:**\n`{logs if logs else 'Çıktı yok.'}`")
+
+    elif action == "del":
+        if p_key in running_processes:
+            running_processes[p_key].terminate()
+            del running_processes[p_key]
+        if os.path.exists(f_path): os.remove(f_path)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+
+# --- İLETİŞİM VE DİĞER MESAJLAR ---
+@bot.message_handler(func=lambda m: True)
+def handle_text(message):
+    uid = message.from_user.id
+    if message.text == "📂 Dosyalarım":
+        files = get_user_files(uid)
+        if not files: return bot.send_message(message.chat.id, "🗄️ Dosyanız yok.")
+        for f in files:
+            markup = types.InlineKeyboardMarkup()
+            markup.row(types.InlineKeyboardButton("▶️ Başlat", callback_data=f"run_{f}"),
+                       types.InlineKeyboardButton("⏹️ Durdur", callback_data=f"stop_{f}"))
+            markup.row(types.InlineKeyboardButton("📝 Log", callback_data=f"log_{f}"),
+                       types.InlineKeyboardButton("🗑️ Sil", callback_data=f"del_{f}"))
+            bot.send_message(message.chat.id, f"📄 `{f}`", reply_markup=markup)
+    
+    elif message.text == "📞 Destek & İletişim":
+        bot.send_message(message.chat.id, "Admin ile iletişime geçmek için mesajınızı yazın (Özelllik aktif).")
+    
+    elif message.text == "📁 Dosya Yükle":
+        bot.send_message(message.chat.id, "📤 Lütfen .py dosyanızı gönderin. Admin onayından sonra yüklenecektir.")
+
+print("✅ Onay Sistemli Bot Aktif!")
+bot.infinity_polling()
