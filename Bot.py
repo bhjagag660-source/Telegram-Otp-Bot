@@ -68,7 +68,7 @@ def install_missing_modules(file_content):
     except Exception as e:
         print(f"❌ Modül kurulum hatası: {e}")
 
-# --- VIP YETKİLENDİRME (@vip / @unvip) ---
+# --- VIP YETKİLENDİRME (/vip / @unvip) ---
 @bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and m.text and m.text.startswith("@"))
 def handle_vip_command(message):
     if message.reply_to_message:
@@ -123,7 +123,7 @@ def callback_query(call):
         
     elif data == "btn_support":
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"📞 **Destek:** Sorunlar için @admin_id (Buraya kendi kullanıcı adını yaz) ile iletişime geçebilirsiniz.")
+        bot.send_message(call.message.chat.id, f"📞 **Destek:** Sorunlar için @HollandaBaskan ile iletişime geçebilirsiniz.")
 
     # Admin Onay/Red İşlemleri
     elif data.startswith(("approve_", "reject_")):
