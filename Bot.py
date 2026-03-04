@@ -2,6 +2,8 @@ import telebot
 from telebot import types
 import os
 import subprocess
+import http.server
+import threading
 
 # --- AYARLAR ---
 TOKEN = "8732604700:AAFGlCTAUBG7xkouu8ZaXnFmf_3MrdVJc3Y"
@@ -13,7 +15,23 @@ bot = telebot.TeleBot(TOKEN)
 # Veri Takibi
 running_processes = {}
 user_states = {}
-pending_files = {} # Onay bekleyen dosyalar: {file_id: {uid, name, content}}
+pending_files = {}
+
+# --- RENDER PORT ÇÖZÜMÜ ---
+def run_keep_alive():
+    class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is alive!")
+
+    port = int(os.environ.get("PORT", 8080))
+    server = http.server.HTTPServer(('', port), HealthCheckHandler)
+    print(f"✅ Render Portu Aktif: {port}")
+    server.serve_forever()
+
+# Web sunucusunu ayrı bir kolda (thread) başlatıyoruz ki botu engellemesin
+threading.Thread(target=run_keep_alive, daemon=True).start()
 
 # --- YARDIMCI FONKSİYONLAR ---
 def get_user_folder(uid):
@@ -58,58 +76,47 @@ def handle_docs(message):
     if len(get_user_files(uid)) >= 3:
         return bot.reply_to(message, "⚠️ Dosya limitiniz dolmuş (3/3).")
 
-    # Dosyayı geçici olarak hafızaya al (Henüz kaydetme)
     file_info = bot.get_file(message.document.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
-    
-    # Onay kodunu oluştur (file_id üzerinden)
     f_id = message.document.file_id
     pending_files[f_id] = {"uid": uid, "name": f_name, "content": downloaded_file}
 
-    # Kullanıcıya bilgi ver
-    bot.reply_to(message, "⏳ Dosyanız admin onayına gönderildi. Onaylandığında bildirim alacaksınız.")
+    bot.reply_to(message, "⏳ Dosyanız admin onayına gönderildi.")
 
-    # Admin'e Onay Butonlu Mesaj Gönder
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("✅ Onayla", callback_data=f"approve_{f_id}"),
                types.InlineKeyboardButton("❌ Reddet", callback_data=f"reject_{f_id}"))
     
-    bot.send_message(ADMIN_ID, f"🔔 **YENİ DOSYA ONAYI**\n\n👤 **Kullanıcı:** {message.from_user.first_name} ({uid})\n📄 **Dosya:** `{f_name}`", 
+    bot.send_message(ADMIN_ID, f"🔔 **YENİ DOSYA ONAYI**\n👤 {message.from_user.first_name}\n📄 `{f_name}`", 
                      reply_markup=markup, parse_mode="Markdown")
 
-# --- CALLBACK İŞLEMLERİ (ONAY, ÇALIŞTIRMA, SİLME) ---
+# --- CALLBACK İŞLEMLERİ ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     uid = call.from_user.id
     data = call.data
 
-    # --- ADMİN ONAY İŞLEMLERİ ---
     if data.startswith(("approve_", "reject_")):
         action, f_id = data.split("_", 1)
-        
         if f_id not in pending_files:
-            return bot.answer_callback_query(call.id, "❌ Dosya verisi bulunamadı veya süre doldu.")
-
+            return bot.answer_callback_query(call.id, "❌ Veri bulunamadı.")
+        
         target_uid = pending_files[f_id]["uid"]
         target_name = pending_files[f_id]["name"]
 
         if action == "approve":
-            # Dosyayı gerçek klasöre kaydet
             path = get_user_folder(target_uid)
             with open(f"{path}/{target_name}", 'wb') as f:
                 f.write(pending_files[f_id]["content"])
-            
-            bot.send_message(target_uid, f"✅ `{target_name}` isimli dosyanız admin tarafından **onaylandı**! Artık çalıştırabilirsiniz.")
-            bot.edit_message_text(f"✅ Onaylandı: `{target_name}` (Kullanıcı: {target_uid})", call.message.chat.id, call.message.message_id)
-        
+            bot.send_message(target_uid, f"✅ `{target_name}` onaylandı!")
+            bot.edit_message_text(f"✅ Onaylandı: `{target_name}`", call.message.chat.id, call.message.message_id)
         else:
-            bot.send_message(target_uid, f"❌ `{target_name}` isimli dosyanız admin tarafından **reddedildi**.")
+            bot.send_message(target_uid, f"❌ `{target_name}` reddedildi.")
             bot.edit_message_text(f"❌ Reddedildi: `{target_name}`", call.message.chat.id, call.message.message_id)
         
         del pending_files[f_id]
         return
 
-    # --- DOSYA YÖNETİM İŞLEMLERİ (BAŞLAT, STOP, LOG, DEL) ---
     action, f_name = data.split("_", 1)
     f_path = f"downloads/{uid}/{f_name}"
     p_key = f"{uid}_{f_name}"
@@ -121,15 +128,13 @@ def callback_query(call):
             log_f = open(f"{f_path}.log", "w")
             proc = subprocess.Popen(["python3", f_path], stdout=log_f, stderr=log_f)
             running_processes[p_key] = proc
-            bot.edit_message_text(f"📄 **Dosya:** `{f_name}`\n📌 **Durum:** 🟢 Çalışıyor", 
-                                  call.message.chat.id, call.message.message_id, reply_markup=call.message.reply_markup, parse_mode="Markdown")
+            bot.edit_message_text(f"📄 `{f_name}`\n📌 Durum: 🟢 Çalışıyor", call.message.chat.id, call.message.message_id, reply_markup=call.message.reply_markup)
 
     elif action == "stop":
         if p_key in running_processes:
             running_processes[p_key].terminate()
             del running_processes[p_key]
-            bot.edit_message_text(f"📄 **Dosya:** `{f_name}`\n📌 **Durum:** 🔴 Durduruldu", 
-                                  call.message.chat.id, call.message.message_id, reply_markup=call.message.reply_markup, parse_mode="Markdown")
+            bot.edit_message_text(f"📄 `{f_name}`\n📌 Durum: 🔴 Durduruldu", call.message.chat.id, call.message.message_id, reply_markup=call.message.reply_markup)
 
     elif action == "log":
         log_p = f"{f_path}.log"
@@ -144,7 +149,7 @@ def callback_query(call):
         if os.path.exists(f_path): os.remove(f_path)
         bot.delete_message(call.message.chat.id, call.message.message_id)
 
-# --- İLETİŞİM VE DİĞER MESAJLAR ---
+# --- MENÜ İŞLEMLERİ ---
 @bot.message_handler(func=lambda m: True)
 def handle_text(message):
     uid = message.from_user.id
@@ -159,11 +164,8 @@ def handle_text(message):
                        types.InlineKeyboardButton("🗑️ Sil", callback_data=f"del_{f}"))
             bot.send_message(message.chat.id, f"📄 `{f}`", reply_markup=markup)
     
-    elif message.text == "📞 Destek & İletişim":
-        bot.send_message(message.chat.id, "Admin ile iletişime geçmek için mesajınızı yazın (Özelllik aktif).")
-    
     elif message.text == "📁 Dosya Yükle":
-        bot.send_message(message.chat.id, "📤 Lütfen .py dosyanızı gönderin. Admin onayından sonra yüklenecektir.")
+        bot.send_message(message.chat.id, "📤 Lütfen .py dosyanızı gönderin.")
 
-print("✅ Onay Sistemli Bot Aktif!")
+print("✅ Bot Aktif ve Render Uyumlu!")
 bot.infinity_polling()
